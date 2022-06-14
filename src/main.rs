@@ -4,6 +4,7 @@ use num::Complex;
 use std::str::FromStr;
 use image::ColorType;
 use image::png::PNGEncoder;
+use rayon::prelude::*;
 
 
 fn escape_time(c: Complex<f64>, limit: usize) -> Option<usize> {
@@ -55,7 +56,6 @@ fn render(pixels: &mut [u8],
           bounds: (usize, usize),
           upper_left: Complex<f64>,
           lower_right: Complex<f64>) {
-    assert_eq!(pixels.len(), bounds.0 * bounds.1);
 
     for row in 0..bounds.1 {
         for column in 0..bounds.0 {
@@ -80,21 +80,34 @@ fn write_image(filename: &str, pixels: &[u8], bounds: (usize, usize)) -> Result<
 
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().skip(1).collect();
 
-    if args.len() != 5 {
-        eprintln!("Usage: {} FILE PIXELS UPPERLEFT LOWERRIGHT", args[0]);
-        eprintln!("Example: {} mandel.png 1000x750 -1.20,0.35 -1,0.20", args[0]);
+    if args.len() != 4 {
+        eprintln!("Usage: FILE PIXELS UPPERLEFT LOWERRIGHT");
+        eprintln!("Example: mandel.png 4000x3000 -1.20,0.35 -1,0.20");
         std::process::exit(1);
     }
 
-    let bounds = parse_pair(&args[2], 'x').expect("error parsing image dimensions");
-    let upper_left = parse_complex(&args[3]).expect("error parsing upper left corner point");
-    let lower_right = parse_complex(&args[4]).expect("error parsing lower right corner point");
+    let bounds = parse_pair(&args[1], 'x').expect("error parsing image dimensions");
+    let upper_left = parse_complex(&args[2]).expect("error parsing upper left corner point");
+    let lower_right = parse_complex(&args[3]).expect("error parsing lower right corner point");
 
     let mut pixels = vec![0; bounds.0 * bounds.1];
+    {
+        let bands: Vec<(usize, &mut [u8])> = pixels
+            .chunks_mut(bounds.0)
+            .enumerate()
+            .collect();
 
-    render(&mut pixels, bounds, upper_left, lower_right);
+        bands.into_par_iter()
+            .for_each(|(i, band)| {
+                let top = i;
+                let band_bounds = (bounds.0,1);
+                let band_upper_left = pixel_to_point(bounds,(0,top),upper_left,lower_right);
+                let band_lower_right = pixel_to_point(bounds,(bounds.0,top + 1), upper_left, lower_right);
 
-    write_image(&args[1], &pixels, bounds).expect("error writing PNG file");
+                render(band, band_bounds, band_upper_left, band_lower_right);
+            })
+    }
+    write_image(&args[0], &pixels, bounds).expect("error writing PNG file");
 }
